@@ -137,12 +137,12 @@ private fun MapViewport(
     modifier: Modifier = Modifier
 ) {
     var viewport by remember { mutableStateOf(IntSize.Zero) }
-    val s by rememberUpdatedState(scale)
-    val ox by rememberUpdatedState(offsetX)
-    val oy by rememberUpdatedState(offsetY)
-    val cx by rememberUpdatedState(centerX)
-    val cz by rememberUpdatedState(centerZ)
-    val transform by rememberUpdatedState(onTransform)
+    val currentScale by rememberUpdatedState(scale)
+    val currentOffsetX by rememberUpdatedState(offsetX)
+    val currentOffsetY by rememberUpdatedState(offsetY)
+    val currentCenterX by rememberUpdatedState(centerX)
+    val currentCenterZ by rememberUpdatedState(centerZ)
+    val transformCallback by rememberUpdatedState(onTransform)
     val tapCallback by rememberUpdatedState(onTap)
     val edgeCallback by rememberUpdatedState(onEdgePan)
     Box(
@@ -151,51 +151,64 @@ private fun MapViewport(
             .onSizeChanged { viewport = it }
             .pointerInput(bitmap) {
                 detectTransformGestures { _, pan, zoom, _ ->
-                    val nextScale = (s * zoom).coerceIn(1f, 12f)
-                    val nextX = ox + pan.x
-                    val nextY = oy + pan.y
-                    transform(zoom, pan)
+                    val nextScale = (currentScale * zoom).coerceIn(1f, 12f)
+                    val nextX = currentOffsetX + pan.x
+                    val nextY = currentOffsetY + pan.y
+                    transformCallback(zoom, pan)
                     val w = viewport.width.toFloat()
                     val h = viewport.height.toFloat()
-                    if (w > 0 && h > 0 && (abs(nextX) > w * .42f || abs(nextY) > h * .42f)) {
+                    if (w > 0f && h > 0f && (abs(nextX) > w * .42f || abs(nextY) > h * .42f)) {
                         edgeCallback(
-                            cx - (nextX / (w * nextScale) * MAP_BLOCKS).roundToInt(),
-                            cz - (nextY / (h * nextScale) * MAP_BLOCKS).roundToInt()
+                            currentCenterX - (nextX / (w * nextScale) * MAP_BLOCKS).roundToInt(),
+                            currentCenterZ - (nextY / (h * nextScale) * MAP_BLOCKS).roundToInt()
                         )
                     }
                 }
             }
             .pointerInput(bitmap) {
-                detectTapGestures { p ->
+                detectTapGestures { point ->
                     val w = viewport.width.toFloat()
                     val h = viewport.height.toFloat()
-                    if (w > 0 && h > 0) {
-                        tapCallback(
-                            cx + (((p.x - w / 2f - ox) / (w * s)) * MAP_BLOCKS).roundToInt(),
-                            cz + (((p.y - h / 2f - oy) / (h * s)) * MAP_BLOCKS).roundToInt()
-                        )
+                    if (w > 0f && h > 0f) {
+                        val fit = minOf(w / bitmap.width.toFloat(), h / bitmap.height.toFloat())
+                        val mapW = bitmap.width * fit
+                        val mapH = bitmap.height * fit
+                        val left = (w - mapW) / 2f
+                        val top = (h - mapH) / 2f
+                        val imageX = (point.x - w / 2f - currentOffsetX) / currentScale + w / 2f
+                        val imageY = (point.y - h / 2f - currentOffsetY) / currentScale + h / 2f
+                        if (imageX >= left && imageX <= left + mapW && imageY >= top && imageY <= top + mapH) {
+                            val blockX = ((imageX - left) / mapW * MAP_BLOCKS).roundToInt()
+                            val blockZ = ((imageY - top) / mapH * MAP_BLOCKS).roundToInt()
+                            tapCallback(currentCenterX - MAP_BLOCKS / 2 + blockX, currentCenterZ - MAP_BLOCKS / 2 + blockZ)
+                        }
                     }
                 }
             },
         contentAlignment = Alignment.Center
     ) {
-        Image(bitmap.asImageBitmap(), "Bedrock biome map",
-            Modifier.fillMaxSize().graphicsLayer {
-                scaleX = scale; scaleY = scale; translationX = offsetX; translationY = offsetY
-            }, contentScale = ContentScale.FillBounds)
         Canvas(Modifier.fillMaxSize().graphicsLayer {
-            scaleX = scale; scaleY = scale; translationX = offsetX; translationY = offsetY
+            scaleX = scale
+            scaleY = scale
+            translationX = offsetX
+            translationY = offsetY
         }) {
-            val w = size.width
-            val h = size.height
+            val fit = minOf(size.width / bitmap.width.toFloat(), size.height / bitmap.height.toFloat())
+            val mapW = bitmap.width * fit
+            val mapH = bitmap.height * fit
+            val left = (size.width - mapW) / 2f
+            val top = (size.height - mapH) / 2f
+            drawImage(bitmap.asImageBitmap(),
+                dstOffset = androidx.compose.ui.unit.IntOffset(left.roundToInt(), top.roundToInt()),
+                dstSize = IntSize(mapW.roundToInt(), mapH.roundToInt()))
             if (showGrid) {
                 for (i in 0..100) {
-                    val px = i * w / 100f
-                    val py = i * h / 100f
+                    val px = left + i * mapW / 100f
+                    val py = top + i * mapH / 100f
                     val major = i % 4 == 0
                     val color = Color.White.copy(alpha = if (major) .42f else .13f)
-                    drawLine(color, Offset(px, 0f), Offset(px, h), if (major) 1.1f else .5f)
-                    drawLine(color, Offset(0f, py), Offset(w, py), if (major) 1.1f else .5f)
+                    drawLine(color, Offset(px, top), Offset(px, top + mapH), if (major) 1.1f else .5f)
+                    drawLine(color, Offset(left, py), Offset(left + mapW, py), if (major) 1.1f else .5f)
                 }
             }
             if (showStructures) {
@@ -208,16 +221,18 @@ private fun MapViewport(
                     val dx = st.x - centerX
                     val dz = st.z - centerZ
                     if (abs(dx) <= MAP_BLOCKS / 2 && abs(dz) <= MAP_BLOCKS / 2) {
-                        val px = (dx.toFloat() / MAP_BLOCKS + .5f) * w
-                        val py = (dz.toFloat() / MAP_BLOCKS + .5f) * h
+                        val px = left + (dx.toFloat() / MAP_BLOCKS + .5f) * mapW
+                        val py = top + (dz.toFloat() / MAP_BLOCKS + .5f) * mapH
                         drawCircle(Color(0xFFFFD54F), 12f, Offset(px, py))
                         drawContext.canvas.nativeCanvas.drawText(structureIcon(st.name), px, py + 10f, paint)
                     }
                 }
             }
-            drawLine(Color.White, Offset(w / 2 - 10f, h / 2), Offset(w / 2 + 10f, h / 2), 2f)
-            drawLine(Color.White, Offset(w / 2, h / 2 - 10f), Offset(w / 2, h / 2 + 10f), 2f)
-            drawCircle(Color.White, 3f, Offset(w / 2, h / 2), style = Stroke(1.5f))
+            val midX = left + mapW / 2f
+            val midY = top + mapH / 2f
+            drawLine(Color.White, Offset(midX - 10f, midY), Offset(midX + 10f, midY), 2f)
+            drawLine(Color.White, Offset(midX, midY - 10f), Offset(midX, midY + 10f), 2f)
+            drawCircle(Color.White, 3f, Offset(midX, midY), style = Stroke(1.5f))
         }
         Text("中心 X:" + centerX + "  Z:" + centerZ, Modifier.align(Alignment.TopStart).padding(8.dp)
             .background(Color.Black.copy(alpha = .72f), RoundedCornerShape(5.dp)).padding(6.dp),
