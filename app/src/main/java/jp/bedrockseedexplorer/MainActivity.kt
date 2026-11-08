@@ -336,7 +336,7 @@ private fun SeedExplorerScreen() {
                     biome = "地図をタップすると座標とバイオームを表示"
                     loadAt(seedValue, cx, cz)
                 }
-            }, Modifier.fillMaxWidth()) { Text(if (loading) "読み込み中…" else "マップを表示") }
+            }, modifier = Modifier.fillMaxWidth()) { Text(if (loading) "読み込み中…" else "マップを表示") }
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
 
             Card(Modifier.fillMaxWidth()) {
