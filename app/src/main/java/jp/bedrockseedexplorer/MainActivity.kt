@@ -61,6 +61,19 @@ class MainActivity : ComponentActivity() {
 
 private data class Structure(val name: String, val x: Int, val z: Int, val distance: Double)
 
+private object BiomeApiThrottle {
+    private var nextAllowedAt = 0L
+    suspend fun waitForSlot() {
+        val waitMs = synchronized(this) {
+            val now = System.currentTimeMillis()
+            val slot = maxOf(now, nextAllowedAt)
+            nextAllowedAt = slot + 10_500L
+            slot - now
+        }
+        if (waitMs > 0L) delay(waitMs)
+    }
+}
+
 private suspend fun fetchBytes(url: String): ByteArray = withContext(Dispatchers.IO) {
     val c = URL(url).openConnection() as HttpURLConnection
     c.connectTimeout = 15000
@@ -77,6 +90,7 @@ private suspend fun fetchBytes(url: String): ByteArray = withContext(Dispatchers
 }
 
 private suspend fun fetchMap(seed: Long, x: Int, z: Int): Bitmap {
+    BiomeApiThrottle.waitForSlot()
     val s = URLEncoder.encode(seed.toString(), "UTF-8")
     val url = "https://www.mineseedfinder.com/GetBiomes?seed=" + s + "&x=" + x + "&z=" + z + "&size=" + MAP_SAMPLES + "&scale=" + MAP_STEP + "&outputformat=image"
     val bytes = fetchBytes(url)
@@ -95,6 +109,7 @@ private suspend fun fetchStructures(seed: Long, x: Int, z: Int): List<Structure>
 }
 
 private suspend fun fetchBiome(seed: Long, x: Int, z: Int): String {
+    BiomeApiThrottle.waitForSlot()
     val s = URLEncoder.encode(seed.toString(), "UTF-8")
     return String(fetchBytes("https://www.mineseedfinder.com/GetBiomeAt?seed=" + s + "&x=" + x + "&z=" + z), Charsets.UTF_8).trim()
 }
@@ -181,9 +196,9 @@ private fun MapViewport(
             val w = size.width
             val h = size.height
             if (showGrid) {
-                for (i in 0..25) {
-                    val px = i * w / 25f
-                    val py = i * h / 25f
+                for (i in 0..100) {
+                    val px = i * w / 100f
+                    val py = i * h / 100f
                     val major = i % 4 == 0
                     val color = Color.White.copy(alpha = if (major) .42f else .13f)
                     drawLine(color, Offset(px, 0f), Offset(px, h), if (major) 1.1f else .5f)
@@ -242,7 +257,6 @@ private fun SeedExplorerScreen() {
     var biome by remember { mutableStateOf("地図をタップすると座標とバイオームを表示") }
     var biomeLoading by remember { mutableStateOf(false) }
     var biomeJob by remember { mutableStateOf<Job?>(null) }
-    var lastMapRequest by remember { mutableLongStateOf(0L) }
     val scope = rememberCoroutineScope()
 
     fun resetMap() { scale = 1f; offsetX = 0f; offsetY = 0f }
@@ -253,9 +267,6 @@ private fun SeedExplorerScreen() {
         message = "地図の続きを読み込んでいます…"
         scope.launch {
             try {
-                val wait = (10_500L - (System.currentTimeMillis() - lastMapRequest)).coerceAtLeast(0L)
-                if (lastMapRequest != 0L && wait > 0) delay(wait)
-                lastMapRequest = System.currentTimeMillis()
                 val nextBitmap = fetchMap(seedValue, newX, newZ)
                 val nextStructures = fetchStructures(seedValue, newX, newZ)
                 bitmap = nextBitmap
