@@ -61,17 +61,12 @@ class MainActivity : ComponentActivity() {
 
 private data class Structure(val name: String, val x: Int, val z: Int, val distance: Double)
 
-private object BiomeApiThrottle {
-    private var nextAllowedAt = 0L
-    suspend fun waitForSlot() {
-        val waitMs = synchronized(this) {
-            val now = System.currentTimeMillis()
-            val slot = maxOf(now, nextAllowedAt)
-            nextAllowedAt = slot + 10_500L
-            slot - now
-        }
-        if (waitMs > 0L) delay(waitMs)
+private object MapImageCache {
+    private val entries = object : LinkedHashMap<String, Bitmap>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>?): Boolean = size > 12
     }
+    @Synchronized fun get(key: String): Bitmap? = entries[key]
+    @Synchronized fun put(key: String, bitmap: Bitmap) { entries[key] = bitmap }
 }
 
 private suspend fun fetchBytes(url: String): ByteArray = withContext(Dispatchers.IO) {
@@ -90,7 +85,6 @@ private suspend fun fetchBytes(url: String): ByteArray = withContext(Dispatchers
 }
 
 private suspend fun fetchMap(seed: Long, x: Int, z: Int): Bitmap {
-    BiomeApiThrottle.waitForSlot()
     val s = URLEncoder.encode(seed.toString(), "UTF-8")
     val url = "https://www.mineseedfinder.com/GetBiomes?seed=" + s + "&x=" + x + "&z=" + z + "&size=" + MAP_SAMPLES + "&scale=" + MAP_STEP + "&outputformat=image"
     val bytes = fetchBytes(url)
@@ -109,7 +103,6 @@ private suspend fun fetchStructures(seed: Long, x: Int, z: Int): List<Structure>
 }
 
 private suspend fun fetchBiome(seed: Long, x: Int, z: Int): String {
-    BiomeApiThrottle.waitForSlot()
     val s = URLEncoder.encode(seed.toString(), "UTF-8")
     return String(fetchBytes("https://www.mineseedfinder.com/GetBiomeAt?seed=" + s + "&x=" + x + "&z=" + z), Charsets.UTF_8).trim()
 }
@@ -267,14 +260,25 @@ private fun SeedExplorerScreen() {
         message = "地図の続きを読み込んでいます…"
         scope.launch {
             try {
-                val nextBitmap = fetchMap(seedValue, newX, newZ)
-                val nextStructures = fetchStructures(seedValue, newX, newZ)
+                val cacheKey = seedValue.toString() + ":" + newX + ":" + newZ
+                val cached = MapImageCache.get(cacheKey)
+                val nextBitmap = cached ?: fetchMap(seedValue, newX, newZ).also { MapImageCache.put(cacheKey, it) }
                 bitmap = nextBitmap
-                structures = nextStructures
                 centerX = newX; centerZ = newZ
                 x = newX.toString(); z = newZ.toString()
                 offsetX = 0f; offsetY = 0f
-                message = "地図を更新しました。構造物 " + nextStructures.size + " 件"
+                message = if (cached != null) "保存済みマップを即時表示中。構造物を更新しています…" else "マップ表示完了。構造物を取得しています…"
+                launch {
+                    try {
+                        val nextStructures = fetchStructures(seedValue, newX, newZ)
+                        if (centerX == newX && centerZ == newZ) {
+                            structures = nextStructures
+                            message = "地図を更新しました。構造物 " + nextStructures.size + " 件"
+                        }
+                    } catch (e: Exception) {
+                        if (centerX == newX && centerZ == newZ) message = "マップ表示済み・構造物取得失敗: " + (e.message ?: "通信エラー")
+                    }
+                }
             } catch (e: Exception) {
                 message = "読み込み失敗: " + (e.message ?: "通信エラー")
             } finally { loading = false }
@@ -395,7 +399,7 @@ private fun SeedExplorerScreen() {
                 )
             }
             Text(message, style = MaterialTheme.typography.bodyMedium)
-            Text("地形・バイオーム・構造物データ: MineSeedFinder API。地形APIの利用制限に合わせ、範囲の自動更新には約10.5秒の間隔を設けています。", style = MaterialTheme.typography.bodySmall)
+            Text("地形・バイオーム・構造物データ: MineSeedFinder API。通信環境やAPI側の混雑・利用制限により待ち時間が発生する場合があります。", style = MaterialTheme.typography.bodySmall)
             Text("非公式アプリ。Minecraft公式とは関係ありません。", style = MaterialTheme.typography.bodySmall)
         }
     }
