@@ -5,6 +5,14 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -67,6 +75,9 @@ private fun SeedExplorerScreen() {
     var structures by remember { mutableStateOf<List<Structure>>(emptyList()) }
     var message by remember { mutableStateOf("Seed値と中心座標を入力してマップを表示できます。") }
     var loading by remember { mutableStateOf(false) }
+    var mapScale by remember { mutableFloatStateOf(1f) }
+    var mapOffsetX by remember { mutableFloatStateOf(0f) }
+    var mapOffsetY by remember { mutableFloatStateOf(0f) }
     val scope = rememberCoroutineScope()
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -108,6 +119,9 @@ private fun SeedExplorerScreen() {
                                 val found = loadStructures(seedValue, centerX, centerZ)
                                 mapBitmap = bitmap
                                 structures = found
+                                mapScale = 1f
+                                mapOffsetX = 0f
+                                mapOffsetY = 0f
                                 message = "バイオームマップを取得しました。構造物: ${found.size}件"
                             } catch (e: Exception) {
                                 message = "取得に失敗しました: ${e.message ?: "通信エラー"}"
@@ -123,17 +137,52 @@ private fun SeedExplorerScreen() {
             if (loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
 
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("バイオームマップ", style = MaterialTheme.typography.titleMedium)
                     val bitmap = mapBitmap
                     if (bitmap != null) {
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "Bedrock biome map",
-                            modifier = Modifier.fillMaxWidth().aspectRatio(1f),
-                            contentScale = ContentScale.FillBounds
-                        )
-                        Text("表示範囲: 中心座標から約±800ブロック（16ブロック間隔）")
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(340.dp)
+                                .background(Color(0xFF20252B), RoundedCornerShape(10.dp))
+                                .border(1.dp, Color(0xFF59636F), RoundedCornerShape(10.dp))
+                                .pointerInput(bitmap) {
+                                    detectTransformGestures { _, pan, zoom, _ ->
+                                        mapScale = (mapScale * zoom).coerceIn(1f, 6f)
+                                        mapOffsetX += pan.x
+                                        mapOffsetY += pan.y
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "Bedrock biome map",
+                                modifier = Modifier.fillMaxSize().graphicsLayer {
+                                    scaleX = mapScale
+                                    scaleY = mapScale
+                                    translationX = mapOffsetX
+                                    translationY = mapOffsetY
+                                },
+                                contentScale = ContentScale.FillBounds
+                            )
+                            androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                                val cx = size.width / 2f
+                                val cy = size.height / 2f
+                                drawLine(Color.White.copy(alpha = 0.9f), androidx.compose.ui.geometry.Offset(cx - 12f, cy), androidx.compose.ui.geometry.Offset(cx + 12f, cy), 2f)
+                                drawLine(Color.White.copy(alpha = 0.9f), androidx.compose.ui.geometry.Offset(cx, cy - 12f), androidx.compose.ui.geometry.Offset(cx, cy + 12f), 2f)
+                            }
+                            Text("中心", modifier = Modifier.align(Alignment.TopStart).padding(8.dp).background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(5.dp)).padding(6.dp), color = Color.White, style = MaterialTheme.typography.labelSmall)
+                            Text("${(mapScale * 100).toInt()}%", modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(5.dp)).padding(6.dp), color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(onClick = { mapScale = (mapScale / 1.25f).coerceAtLeast(1f); if (mapScale == 1f) { mapOffsetX = 0f; mapOffsetY = 0f } }, modifier = Modifier.weight(1f)) { Text("−") }
+                            OutlinedButton(onClick = { mapScale = (mapScale * 1.25f).coerceAtMost(6f) }, modifier = Modifier.weight(1f)) { Text("＋") }
+                            OutlinedButton(onClick = { mapScale = 1f; mapOffsetX = 0f; mapOffsetY = 0f }, modifier = Modifier.weight(1f)) { Text("リセット") }
+                        }
+                        Text("Seed: $seed", style = MaterialTheme.typography.bodySmall)
+                        Text("中心座標  X: $x  /  Z: $z", style = MaterialTheme.typography.bodyMedium)
+                        Text("チャンク座標  X: ${(x.toIntOrNull() ?: 0).floorDiv(16)}  /  Z: ${(z.toIntOrNull() ?: 0).floorDiv(16)}", style = MaterialTheme.typography.bodySmall)
+                        Text("ピンチで拡大・縮小、ドラッグで移動できます。", style = MaterialTheme.typography.bodySmall)
                     } else {
                         Text("Seedを入力して「マップを表示」を押してください。")
                     }
