@@ -101,7 +101,9 @@ private fun SeedExplorerScreen() {
                                 val encodedSeed = URLEncoder.encode(seedValue.toString(), "UTF-8")
                                 val mapUrl = "https://www.mineseedfinder.com/GetBiomes?seed=$encodedSeed&x=$centerX&z=$centerZ&size=100&scale=16&outputformat=image"
                                 val bitmap = withContext(Dispatchers.IO) {
-                                    BitmapFactory.decodeByteArray(fetchBytes(mapUrl), 0, fetchBytes(mapUrl).size)
+                                    val imageBytes = fetchBytes(mapUrl)
+                                    BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+                                        ?: throw IllegalStateException("マップ画像を読み込めませんでした")
                                 }
                                 val found = loadStructures(seedValue, centerX, centerZ)
                                 mapBitmap = bitmap
